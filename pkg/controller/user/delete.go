@@ -15,11 +15,13 @@
 package user
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/google/exposure-notifications-verification-server/pkg/controller"
 	"github.com/google/exposure-notifications-verification-server/pkg/database"
 	"github.com/gorilla/mux"
+	"github.com/jinzhu/gorm"
 )
 
 func (c *Controller) HandleDelete() http.Handler {
@@ -57,8 +59,9 @@ func (c *Controller) HandleDelete() http.Handler {
 			return
 		}
 
-		// Do not allow users to remove themselves unless they are admins.
-		if user.ID == currentUser.ID && !currentUser.Admin {
+		// Do not allow users to remove themselves. System admins can remove
+		// themselves from the system admin panel.
+		if user.ID == currentUser.ID {
 			flash.Error("Failed to remove user from realm: cannot remove self")
 			http.Redirect(w, r, "/users", http.StatusSeeOther)
 			return
@@ -66,7 +69,29 @@ func (c *Controller) HandleDelete() http.Handler {
 
 		user.RemoveRealm(realm)
 
-		if err := c.db.SaveUser(user); err != nil {
+		// Do the membership update and audit entry in a transaction because we need
+		// both to succeed to continue.
+		if err := c.db.RawDB().Transaction(func(tx *gorm.DB) error {
+			// Save the user
+			if err := database.SaveUser(tx, user); err != nil {
+				return fmt.Errorf("failed to save user: %w", err)
+			}
+
+			// Create the audit entry
+			audit := &database.AuditEntry{
+				UserID:     currentUser.ID,
+				Action:     "removed user",
+				TargetType: "users",
+				TargetID:   user.ID,
+				SourceType: "realms",
+				SourceID:   realm.ID,
+			}
+			if err := database.SaveAuditEntry(tx, audit); err != nil {
+				return fmt.Errorf("failed to save audit: %w", err)
+			}
+
+			return nil
+		}); err != nil {
 			flash.Error("Failed to remove user from realm: %v", err)
 			http.Redirect(w, r, "/users", http.StatusSeeOther)
 			return

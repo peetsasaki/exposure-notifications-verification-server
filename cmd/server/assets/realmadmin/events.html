@@ -1,0 +1,62 @@
+{{define "realmadmin/events"}}
+
+{{$realm := .realm}}
+{{$events := .events}}
+
+<!doctype html>
+<html lang="en">
+<head>
+  {{template "head" .}}
+</head>
+
+<body class="tab-content">
+  {{template "navbar" .}}
+
+  <main role="main" class="container">
+    {{template "flash" .}}
+
+    <h1>Realm event log</h1>
+    <p>
+      The list below shows the past 30 days of events that have occurred on this
+      realm. Not all events are audited to preserve privacy.
+    </p>
+
+    <div class="card mb-3 shadow-sm">
+      <div class="card-header">Events</div>
+      <div class="list-group list-group-flush">
+        {{range $event := $events.Entries}}
+          <div class="list-group-item list-group-item-action">
+            <div class="row">
+              <div class="col-sm-3 col-md-2">
+                <span class="small text-monospace">
+                  {{$event.CreatedAt.Format "2006-01-02"}}
+                  {{$event.CreatedAt.Format "3:04 PM"}}
+                </span>
+              </div>
+              <div class="col-sm-9 col-md-10">
+                <span class="text-primary">{{$event.User.Name}}</span>
+
+                {{$event.Action}}
+
+                {{if eq $event.TargetType "users"}}
+                  {{with $user := index $events.PreloadedUsers $event.TargetID}}
+                    <span class="text-primary">{{$user.Name}}</span>
+                  {{end}}
+                {{else if eq $event.TargetType "realms"}}
+                  {{with $realm := index $events.PreloadedRealms $event.TargetID}}
+                    <span class="text-primary">{{$realm.Name}}</span>
+                  {{end}}
+                {{end}}
+              </div>
+            </div>
+          </div>
+        {{end}}
+      </div>
+    </div>
+  </main>
+
+  {{template "scripts" .}}
+
+</body>
+</html>
+{{end}}

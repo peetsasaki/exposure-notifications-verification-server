@@ -15,12 +15,14 @@
 package user
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/google/exposure-notifications-verification-server/pkg/api"
 	"github.com/google/exposure-notifications-verification-server/pkg/controller"
 	"github.com/google/exposure-notifications-verification-server/pkg/database"
 	"github.com/hashicorp/go-multierror"
+	"github.com/jinzhu/gorm"
 )
 
 func (c *Controller) HandleImportBatch() http.Handler {
@@ -31,6 +33,12 @@ func (c *Controller) HandleImportBatch() http.Handler {
 		realm := controller.RealmFromContext(ctx)
 		if realm == nil {
 			controller.MissingRealm(w, r, c.h)
+			return
+		}
+
+		currentUser := controller.UserFromContext(ctx)
+		if realm == nil {
+			controller.MissingUser(w, r, c.h)
 			return
 		}
 
@@ -73,7 +81,29 @@ func (c *Controller) HandleImportBatch() http.Handler {
 				}
 			}
 
-			if err := c.db.SaveUser(user); err != nil {
+			// Do the membership update and audit entry in a transaction because we
+			// need both to succeed to continue.
+			if err := c.db.RawDB().Transaction(func(tx *gorm.DB) error {
+				// Save the user
+				if err := database.SaveUser(tx, user); err != nil {
+					return fmt.Errorf("failed to save user: %w", err)
+				}
+
+				// Create the audit entry
+				audit := &database.AuditEntry{
+					UserID:     currentUser.ID,
+					Action:     "added user",
+					TargetType: "users",
+					TargetID:   user.ID,
+					SourceType: "realms",
+					SourceID:   realm.ID,
+				}
+				if err := database.SaveAuditEntry(tx, audit); err != nil {
+					return fmt.Errorf("failed to save audit: %w", err)
+				}
+
+				return nil
+			}); err != nil {
 				logger.Errorw("Error saving user", "error", err)
 				batchErr = multierror.Append(batchErr, err)
 				continue

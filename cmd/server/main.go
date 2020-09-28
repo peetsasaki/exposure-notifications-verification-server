@@ -403,6 +403,7 @@ func realMain(ctx context.Context) error {
 		realmSub.Handle("/settings/enable-express", realmadminController.HandleEnableExpress()).Methods("POST")
 		realmSub.Handle("/settings/disable-express", realmadminController.HandleDisableExpress()).Methods("POST")
 		realmSub.Handle("/stats", realmadminController.HandleShow()).Methods("GET")
+		realmSub.Handle("/events", realmadminController.HandleEvents()).Methods("GET")
 
 		realmKeysController, err := realmkeys.New(ctx, cfg, db, certificateSigner, cacher, h)
 		if err != nil {
@@ -442,6 +443,8 @@ func realMain(ctx context.Context) error {
 		adminSub.Handle("/realms", adminController.HandleRealmsCreate()).Methods("POST")
 		adminSub.Handle("/realms/new", adminController.HandleRealmsCreate()).Methods("GET")
 		adminSub.Handle("/realms/{id:[0-9]+}/edit", adminController.HandleRealmsUpdate()).Methods("GET")
+		adminSub.Handle("/realms/{id:[0-9]+}/join", adminController.HandleRealmsJoin()).Methods("PATCH")
+		adminSub.Handle("/realms/{id:[0-9]+}/leave", adminController.HandleRealmsLeave()).Methods("PATCH")
 		adminSub.Handle("/realms/{id:[0-9]+}", adminController.HandleRealmsUpdate()).Methods("PATCH")
 
 		adminSub.Handle("/sms", adminController.HandleSMSUpdate()).Methods("GET", "POST")

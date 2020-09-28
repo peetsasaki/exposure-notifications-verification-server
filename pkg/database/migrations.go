@@ -1058,7 +1058,7 @@ func (db *Database) getMigrations(ctx context.Context) *gormigrate.Gormigrate {
 				// ensures people who are already running a system don't get a random
 				// admin user.
 				var user User
-				if err := db.db.Model(&User{}).First(&user).Error; err == nil {
+				if err := tx.Model(&User{}).First(&user).Error; err == nil {
 					return nil
 				} else {
 					if !IsNotFound(err) {
@@ -1072,7 +1072,7 @@ func (db *Database) getMigrations(ctx context.Context) *gormigrate.Gormigrate {
 					Admin: true,
 				}
 
-				if err := db.SaveUser(&user); err != nil {
+				if err := SaveUser(tx, &user); err != nil {
 					return err
 				}
 				return nil
@@ -1365,6 +1365,31 @@ func (db *Database) getMigrations(ctx context.Context) *gormigrate.Gormigrate {
 				}
 
 				return nil
+			},
+		},
+		{
+			ID: "00055-AddAuditEntries",
+			Migrate: func(tx *gorm.DB) error {
+				if err := tx.AutoMigrate(&AuditEntry{}).Error; err != nil {
+					return err
+				}
+
+				sqls := []string{
+					`CREATE INDEX IF NOT EXISTS idx_audit_entries_user_id ON audit_entries (user_id)`,
+					`CREATE INDEX IF NOT EXISTS idx_audit_entries_target ON audit_entries (target_type, target_id)`,
+					`CREATE INDEX IF NOT EXISTS idx_audit_entries_source ON audit_entries (source_type, source_id)`,
+				}
+
+				for _, sql := range sqls {
+					if err := tx.Exec(sql).Error; err != nil {
+						return err
+					}
+				}
+
+				return nil
+			},
+			Rollback: func(tx *gorm.DB) error {
+				return tx.Exec(`DROP TABLE audit_entries`).Error
 			},
 		},
 	})

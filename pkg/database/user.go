@@ -293,9 +293,13 @@ func (db *Database) PasswordChanged(email string, t time.Time) error {
 	return nil
 }
 
-// SaveUser updates the user in the database.
 func (db *Database) SaveUser(u *User) error {
-	db.db.Model(u).Association("Realms").Replace(u.Realms)
-	db.db.Model(u).Association("AdminRealms").Replace(u.AdminRealms)
-	return db.db.Save(u).Error
+	return SaveUser(db.db, u)
+}
+
+// SaveUser updates the user in the database with the specified transaction.
+func SaveUser(tx *gorm.DB, u *User) error {
+	tx.Model(u).Association("Realms").Replace(u.Realms)
+	tx.Model(u).Association("AdminRealms").Replace(u.AdminRealms)
+	return tx.Save(u).Error
 }

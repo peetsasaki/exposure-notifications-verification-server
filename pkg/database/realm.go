@@ -422,6 +422,23 @@ func (r *Realm) SMSProvider(db *Database) (sms.Provider, error) {
 	return provider, nil
 }
 
+func (r *Realm) Audits(db *Database) (*AuditList, error) {
+	var entries []*AuditEntry
+	if err := db.db.
+		Model(&AuditEntry{}).
+		Where("source_type = ? AND source_id = ?", "realms", r.ID).
+		Or("target_type = ? AND target_id = ?", "realms", r.ID).
+		Find(&entries).
+		Error; err != nil {
+		if IsNotFound(err) {
+			return &AuditList{}, nil
+		}
+		return nil, err
+	}
+
+	return db.LoadAuditList(entries)
+}
+
 // AbusePreventionEffectiveLimit returns the effective limit, multiplying the limit by the
 // limit factor and rounding up.
 func (r *Realm) AbusePreventionEffectiveLimit() uint {

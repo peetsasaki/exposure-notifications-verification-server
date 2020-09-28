@@ -16,10 +16,12 @@ package user
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/google/exposure-notifications-verification-server/pkg/controller"
 	"github.com/google/exposure-notifications-verification-server/pkg/database"
+	"github.com/jinzhu/gorm"
 )
 
 func (c *Controller) HandleCreate() http.Handler {
@@ -42,6 +44,12 @@ func (c *Controller) HandleCreate() http.Handler {
 		realm := controller.RealmFromContext(ctx)
 		if realm == nil {
 			controller.MissingRealm(w, r, c.h)
+			return
+		}
+
+		currentUser := controller.UserFromContext(ctx)
+		if realm == nil {
+			controller.MissingUser(w, r, c.h)
 			return
 		}
 
@@ -91,7 +99,29 @@ func (c *Controller) HandleCreate() http.Handler {
 			user.AdminRealms = append(user.AdminRealms, realm)
 		}
 
-		if err := c.db.SaveUser(user); err != nil {
+		// Do the membership update and audit entry in a transaction because we need
+		// both to succeed to continue.
+		if err := c.db.RawDB().Transaction(func(tx *gorm.DB) error {
+			// Save the user
+			if err := database.SaveUser(tx, user); err != nil {
+				return fmt.Errorf("failed to save user: %w", err)
+			}
+
+			// Create the audit entry
+			audit := &database.AuditEntry{
+				UserID:     currentUser.ID,
+				Action:     "added user",
+				TargetType: "users",
+				TargetID:   user.ID,
+				SourceType: "realms",
+				SourceID:   realm.ID,
+			}
+			if err := database.SaveAuditEntry(tx, audit); err != nil {
+				return fmt.Errorf("failed to save audit: %w", err)
+			}
+
+			return nil
+		}); err != nil {
 			flash.Error("Failed to create user: %v", err)
 			c.renderNew(ctx, w)
 			return

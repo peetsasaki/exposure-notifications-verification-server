@@ -16,11 +16,13 @@ package admin
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/google/exposure-notifications-verification-server/pkg/controller"
 	"github.com/google/exposure-notifications-verification-server/pkg/database"
 	"github.com/gorilla/mux"
+	"github.com/jinzhu/gorm"
 )
 
 func (c *Controller) HandleRealmsIndex() http.Handler {
@@ -198,4 +200,131 @@ func (c *Controller) renderEditRealm(ctx context.Context, w http.ResponseWriter,
 	m["systemSMSConfig"] = smsConfig
 	m["supportsPerRealmSigning"] = c.db.SupportsPerRealmSigning()
 	c.h.RenderHTML(w, "admin/realms/edit", m)
+}
+
+func (c *Controller) HandleRealmsJoin() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		vars := mux.Vars(r)
+
+		session := controller.SessionFromContext(ctx)
+		if session == nil {
+			controller.MissingSession(w, r, c.h)
+			return
+		}
+		flash := controller.Flash(session)
+
+		user := controller.UserFromContext(ctx)
+		if user == nil {
+			controller.MissingUser(w, r, c.h)
+			return
+		}
+
+		realm, err := c.db.FindRealm(vars["id"])
+		if err != nil {
+			controller.InternalError(w, r, c.h, err)
+			return
+		}
+
+		user.Realms = append(user.Realms, realm)
+		user.AdminRealms = append(user.AdminRealms, realm)
+
+		// Do the membership update and audit entry in a transaction because we need
+		// both to succeed to continue.
+		if err := c.db.RawDB().Transaction(func(tx *gorm.DB) error {
+			// Save the user
+			if err := database.SaveUser(tx, user); err != nil {
+				return fmt.Errorf("failed to save user: %w", err)
+			}
+
+			// Create the audit entry
+			audit := &database.AuditEntry{
+				UserID:     user.ID,
+				Action:     "added user",
+				TargetType: "users",
+				TargetID:   user.ID,
+				SourceType: "realms",
+				SourceID:   realm.ID,
+			}
+			if err := database.SaveAuditEntry(tx, audit); err != nil {
+				return fmt.Errorf("failed to save audit: %w", err)
+			}
+
+			return nil
+		}); err != nil {
+			flash.Error("Failed to join %q: %v", realm.Name, err)
+			controller.Back(w, r, c.h)
+			return
+		}
+
+		// Store the current realm on the session.
+		controller.StoreSessionRealm(session, realm)
+
+		flash.Alert("Successfully joined %q", realm.Name)
+		controller.Back(w, r, c.h)
+	})
+}
+
+func (c *Controller) HandleRealmsLeave() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		vars := mux.Vars(r)
+
+		session := controller.SessionFromContext(ctx)
+		if session == nil {
+			controller.MissingSession(w, r, c.h)
+			return
+		}
+		flash := controller.Flash(session)
+
+		user := controller.UserFromContext(ctx)
+		if user == nil {
+			controller.MissingUser(w, r, c.h)
+			return
+		}
+
+		realm, err := c.db.FindRealm(vars["id"])
+		if err != nil {
+			controller.InternalError(w, r, c.h, err)
+			return
+		}
+
+		user.RemoveRealm(realm)
+
+		// Do the membership update and audit entry in a transaction because we need
+		// both to succeed to continue.
+		if err := c.db.RawDB().Transaction(func(tx *gorm.DB) error {
+			// Save the user
+			if err := database.SaveUser(tx, user); err != nil {
+				return fmt.Errorf("failed to save user: %w", err)
+			}
+
+			// Create the audit entry
+			audit := &database.AuditEntry{
+				UserID:     user.ID,
+				Action:     "removed user",
+				TargetType: "users",
+				TargetID:   user.ID,
+				SourceType: "realms",
+				SourceID:   realm.ID,
+			}
+			if err := database.SaveAuditEntry(tx, audit); err != nil {
+				return fmt.Errorf("failed to save audit: %w", err)
+			}
+
+			return nil
+		}); err != nil {
+			flash.Error("Failed to leave %q: %v", realm.Name, err)
+			controller.Back(w, r, c.h)
+			return
+		}
+
+		// If the currently-selected realm is the realm the admin just left, clear
+		// it.
+		if controller.RealmIDFromSession(session) == realm.ID {
+			controller.ClearSessionRealm(session)
+		}
+		flash.Alert("Successfully left %q", realm.Name)
+		controller.Back(w, r, c.h)
+	})
 }
